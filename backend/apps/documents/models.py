@@ -6,6 +6,7 @@ from django.db import models
 from django.core.validators import URLValidator
 from apps.companies.models import Company
 from apps.entities.models import Entity
+from .constants import ValidationStatus, DocumentAction, EntityType
 
 
 class DocumentType(models.Model):
@@ -24,12 +25,7 @@ class DocumentType(models.Model):
         entity_type: Tipo de entidad al que aplica
         created_at: Fecha de creación
     """
-    ENTITY_TYPE_CHOICES = [
-        ('vehicle', 'Vehículo'),
-        ('employee', 'Empleado'),
-        ('supplier', 'Proveedor'),
-        ('asset', 'Activo'),
-    ]
+    ENTITY_TYPE_CHOICES = EntityType.CHOICES
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     code = models.CharField(max_length=50, unique=True, verbose_name='Código')
@@ -90,11 +86,7 @@ class Document(models.Model):
         uploaded_at: Fecha de carga
         validated_at: Fecha de validación
     """
-    VALIDATION_STATUS_CHOICES = [
-        ('P', 'Pendiente'),
-        ('A', 'Aprobado'),
-        ('R', 'Rechazado'),
-    ]
+    VALIDATION_STATUS_CHOICES = ValidationStatus.CHOICES
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     company = models.ForeignKey(
@@ -126,7 +118,7 @@ class Document(models.Model):
     validation_status = models.CharField(
         max_length=1,
         choices=VALIDATION_STATUS_CHOICES,
-        default='P',
+        default=ValidationStatus.PENDING,
         verbose_name='Estado de validación'
     )
     validation_reason = models.TextField(null=True, blank=True, verbose_name='Razón de validación')
@@ -148,7 +140,11 @@ class Document(models.Model):
         ]
         constraints = [
             models.CheckConstraint(
-                check=models.Q(validation_status__in=['P', 'A', 'R']),
+                check=models.Q(validation_status__in=[
+                    ValidationStatus.PENDING,
+                    ValidationStatus.APPROVED,
+                    ValidationStatus.REJECTED
+                ]),
                 name='valid_validation_status'
             )
         ]
@@ -172,13 +168,7 @@ class DocumentValidationLog(models.Model):
         metadata: Metadatos adicionales
         created_at: Fecha de creación del registro
     """
-    ACTION_CHOICES = [
-        ('uploaded', 'Cargado'),
-        ('approved', 'Aprobado'),
-        ('rejected', 'Rechazado'),
-        ('n8n_sent', 'Enviado a N8N'),
-        ('n8n_callback', 'Respuesta de N8N'),
-    ]
+    ACTION_CHOICES = DocumentAction.CHOICES
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     document = models.ForeignKey(

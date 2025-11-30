@@ -10,7 +10,13 @@ from typing import Dict, Any, Optional
 from django.conf import settings
 from django.utils import timezone
 from botocore.exceptions import ClientError
-from .models import Document, DocumentValidationLog
+from .models import Document
+from .constants import ValidationStatus, DocumentAction, N8NStatus
+from .signals import (
+    document_uploaded, document_approved, document_rejected,
+    document_n8n_sent, document_n8n_callback_received
+)
+from .repositories import DocumentRepository, DocumentValidationLogRepository
 
 
 class S3Service:
@@ -178,39 +184,8 @@ class N8NService:
 class DocumentValidationService:
     """
     Service for document validation business logic.
+    Uses signals for event-driven architecture.
     """
-
-    @staticmethod
-    def create_validation_log(document: Document, action: str, new_status: str,
-                            performed_by: str, reason: Optional[str] = None,
-                            metadata: Optional[Dict] = None) -> DocumentValidationLog:
-        """
-        Crea un registro de auditoría para una validación de documento.
-
-        Args:
-            document: Documento
-            action: Acción realizada
-            new_status: Nuevo estado
-            performed_by: Usuario que realizó la acción
-            reason: Razón del cambio
-            metadata: Metadatos adicionales
-
-        Returns:
-            Objeto DocumentValidationLog creado
-        """
-        previous_status = document.validation_status
-
-        log = DocumentValidationLog.objects.create(
-            document=document,
-            action=action,
-            previous_status=previous_status,
-            new_status=new_status,
-            reason=reason or '',
-            performed_by=performed_by,
-            metadata=metadata or {}
-        )
-
-        return log
 
     @staticmethod
     def approve_document(document: Document, reason: str, performed_by: str) -> Document:
@@ -225,15 +200,15 @@ class DocumentValidationService:
         Returns:
             Documento actualizado
         """
-        document.validation_status = 'A'
+        document.validation_status = ValidationStatus.APPROVED
         document.validation_reason = reason
         document.validated_at = timezone.now()
         document.save()
 
-        DocumentValidationService.create_validation_log(
+        # Emit signal - observers will handle logging and other side effects
+        document_approved.send(
+            sender=DocumentValidationService,
             document=document,
-            action='approved',
-            new_status='A',
             performed_by=performed_by,
             reason=reason
         )
@@ -253,15 +228,15 @@ class DocumentValidationService:
         Returns:
             Documento actualizado
         """
-        document.validation_status = 'R'
+        document.validation_status = ValidationStatus.REJECTED
         document.validation_reason = reason
         document.validated_at = timezone.now()
         document.save()
 
-        DocumentValidationService.create_validation_log(
+        # Emit signal - observers will handle logging and other side effects
+        document_rejected.send(
+            sender=DocumentValidationService,
             document=document,
-            action='rejected',
-            new_status='R',
             performed_by=performed_by,
             reason=reason
         )
@@ -283,23 +258,21 @@ class DocumentValidationService:
         Returns:
             Documento actualizado
         """
-        if status == 'approved':
-            new_status = 'A'
-            action = 'approved'
+        if status == N8NStatus.APPROVED:
+            new_status = ValidationStatus.APPROVED
         else:
-            new_status = 'R'
-            action = 'rejected'
+            new_status = ValidationStatus.REJECTED
 
         document.validation_status = new_status
         document.validation_reason = reason
         document.validated_at = timezone.now()
         document.save()
 
-        DocumentValidationService.create_validation_log(
+        # Emit signal - observers will handle logging and other side effects
+        document_n8n_callback_received.send(
+            sender=DocumentValidationService,
             document=document,
-            action='n8n_callback',
-            new_status=new_status,
-            performed_by='n8n',
+            status=status,
             reason=reason,
             metadata=metadata or {}
         )

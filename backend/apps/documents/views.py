@@ -2,7 +2,7 @@
 Views for Document Management System.
 """
 from django.conf import settings
-from django.db import connection
+from django.db import connection, transaction
 from django.utils import timezone
 from rest_framework import viewsets, status, filters
 from rest_framework.decorators import action
@@ -18,6 +18,8 @@ from .serializers import (
     N8NCallbackSerializer, DocumentValidateSerializer
 )
 from .services import S3Service, N8NService, DocumentValidationService
+from .constants import ValidationStatus, DocumentAction
+from .signals import document_uploaded, document_n8n_sent
 
 
 class DocumentTypeViewSet(viewsets.ModelViewSet):
@@ -57,17 +59,121 @@ class DocumentViewSet(viewsets.ModelViewSet):
     ordering_fields = ['uploaded_at', 'expiration_date', 'file_name']
     ordering = ['-uploaded_at']
 
+    # Serializer class mapping - follows Open/Closed Principle
+    serializer_classes = {
+        'upload': DocumentUploadSerializer,
+        'approve': DocumentApproveRejectSerializer,
+        'reject': DocumentApproveRejectSerializer,
+        'n8n_callback': N8NCallbackSerializer,
+        'validate': DocumentValidateSerializer,
+    }
+
+    def __init__(self, *args, s3_service=None, n8n_service=None, **kwargs):
+        """
+        Initialize with dependency injection support.
+
+        Args:
+            s3_service: S3Service instance (injected for testing)
+            n8n_service: N8NService instance (injected for testing)
+        """
+        super().__init__(*args, **kwargs)
+        self.s3_service = s3_service or S3Service()
+        self.n8n_service = n8n_service or N8NService()
+
     def get_serializer_class(self):
-        """Retornar el serializer apropiado según la acción."""
-        if self.action == 'upload':
-            return DocumentUploadSerializer
-        elif self.action in ['approve', 'reject']:
-            return DocumentApproveRejectSerializer
-        elif self.action == 'n8n_callback':
-            return N8NCallbackSerializer
-        elif self.action == 'validate':
-            return DocumentValidateSerializer
-        return DocumentSerializer
+        """Return appropriate serializer based on action using dictionary mapping."""
+        return self.serializer_classes.get(self.action, DocumentSerializer)
+
+    def _upload_file_to_s3(self, file_obj, company, entity, doc_type):
+        """Upload file to S3 and return metadata."""
+        return self.s3_service.upload_file(
+            file_obj=file_obj,
+            company_id=str(company.id),
+            entity_id=str(entity.id),
+            entity_type=entity.entity_type,
+            document_type_code=doc_type.code
+        )
+
+    def _create_document(self, company, entity, doc_type, s3_metadata, validated_data):
+        """Create document record in database."""
+        return Document.objects.create(
+            company=company,
+            entity=entity,
+            document_type=doc_type,
+            file_name=s3_metadata['file_name'],
+            file_size=s3_metadata['file_size'],
+            mime_type=s3_metadata['mime_type'],
+            s3_bucket=s3_metadata['s3_bucket'],
+            s3_key=s3_metadata['s3_key'],
+            s3_region=s3_metadata['s3_region'],
+            issue_date=validated_data.get('issue_date'),
+            expiration_date=validated_data.get('expiration_date'),
+            validation_status=ValidationStatus.PENDING,
+            uploaded_by=validated_data.get('uploaded_by', 'system')
+        )
+
+    def _build_n8n_payload(self, document, company, entity, doc_type, callback_url):
+        """Build payload for N8N webhook."""
+        s3_url = self.s3_service.generate_presigned_url(
+            s3_key=document.s3_key,
+            expiration=3600  # 1 hora
+        )
+
+        return {
+            'document_id': str(document.id),
+            'company_id': str(company.id),
+            'entity_type': entity.entity_type,
+            'entity_id': str(entity.id),
+            'entity_code': entity.entity_code,
+            'document_type': doc_type.code,
+            'file_name': document.file_name,
+            's3_bucket': document.s3_bucket,
+            's3_key': document.s3_key,
+            's3_url': s3_url,
+            'issue_date': str(document.issue_date) if document.issue_date else None,
+            'expiration_date': str(document.expiration_date) if document.expiration_date else None,
+            'callback_url': callback_url
+        }
+
+    def _trigger_n8n_workflow(self, document, company, entity, doc_type):
+        """Trigger N8N workflow if needed and return success status."""
+        if not (doc_type.uses_n8n_workflow and doc_type.n8n_webhook_url):
+            return False
+
+        try:
+            callback_base = settings.DJANGO_CALLBACK_BASE_URL
+            callback_url = f"{callback_base}/api/documents/{document.id}/n8n-callback/"
+
+            payload = self._build_n8n_payload(document, company, entity, doc_type, callback_url)
+            self.n8n_service.trigger_workflow(doc_type.n8n_webhook_url, payload)
+
+            # Emit signal for successful N8N send
+            document_n8n_sent.send(
+                sender=self.__class__,
+                document=document,
+                webhook_url=doc_type.n8n_webhook_url,
+                error=None
+            )
+            return True
+
+        except Exception as e:
+            # Emit signal for failed N8N send
+            document_n8n_sent.send(
+                sender=self.__class__,
+                document=document,
+                webhook_url=doc_type.n8n_webhook_url,
+                error=e
+            )
+            return False
+
+    def _build_upload_response(self, document, n8n_triggered):
+        """Build response for upload endpoint."""
+        return {
+            'id': str(document.id),
+            'status': document.validation_status,
+            'message': 'Documento cargado exitosamente',
+            'n8n_triggered': n8n_triggered
+        }
 
     @swagger_auto_schema(
         method='post',
@@ -109,107 +215,37 @@ class DocumentViewSet(viewsets.ModelViewSet):
         file_obj = validated_data['file']
 
         try:
-            # Subir archivo a S3
-            s3_service = S3Service()
-            s3_metadata = s3_service.upload_file(
-                file_obj=file_obj,
-                company_id=str(company.id),
-                entity_id=str(entity.id),
-                entity_type=entity.entity_type,
-                document_type_code=doc_type.code
+            with transaction.atomic():
+                # Upload file to S3
+                s3_metadata = self._upload_file_to_s3(file_obj, company, entity, doc_type)
+
+                # Create document in database
+                document = self._create_document(company, entity, doc_type, s3_metadata, validated_data)
+
+                # Emit signal for document upload
+                document_uploaded.send(
+                    sender=self.__class__,
+                    document=document,
+                    performed_by=document.uploaded_by,
+                    reason='Documento cargado exitosamente'
+                )
+
+            # Trigger N8N workflow if needed (outside transaction)
+            n8n_triggered = self._trigger_n8n_workflow(document, company, entity, doc_type)
+
+            return Response(
+                self._build_upload_response(document, n8n_triggered),
+                status=status.HTTP_201_CREATED
             )
-
-            # Crear documento en la BD
-            document = Document.objects.create(
-                company=company,
-                entity=entity,
-                document_type=doc_type,
-                file_name=s3_metadata['file_name'],
-                file_size=s3_metadata['file_size'],
-                mime_type=s3_metadata['mime_type'],
-                s3_bucket=s3_metadata['s3_bucket'],
-                s3_key=s3_metadata['s3_key'],
-                s3_region=s3_metadata['s3_region'],
-                issue_date=validated_data.get('issue_date'),
-                expiration_date=validated_data.get('expiration_date'),
-                validation_status='P',
-                uploaded_by=validated_data.get('uploaded_by', 'system')
-            )
-
-            # Registrar log de auditoría
-            DocumentValidationService.create_validation_log(
-                document=document,
-                action='uploaded',
-                new_status='P',
-                performed_by=document.uploaded_by,
-                reason='Documento cargado exitosamente'
-            )
-
-            n8n_triggered = False
-
-            # Si el tipo de documento usa N8N, disparar webhook
-            if doc_type.uses_n8n_workflow and doc_type.n8n_webhook_url:
-                try:
-                    n8n_service = N8NService()
-                    # Use DJANGO_CALLBACK_BASE_URL for N8N callbacks (Docker internal network)
-                    callback_base = settings.DJANGO_CALLBACK_BASE_URL
-                    callback_url = f"{callback_base}/api/documents/{document.id}/n8n-callback/"
-
-                    # Generar URL pre-firmada de S3 para que N8N pueda descargar el archivo
-                    s3_service_download = S3Service()
-                    s3_url = s3_service_download.generate_presigned_url(
-                        s3_key=document.s3_key,
-                        expiration=3600  # 1 hora
-                    )
-
-                    payload = {
-                        'document_id': str(document.id),
-                        'company_id': str(company.id),
-                        'entity_type': entity.entity_type,
-                        'entity_id': str(entity.id),
-                        'entity_code': entity.entity_code,
-                        'document_type': doc_type.code,
-                        'file_name': document.file_name,
-                        's3_bucket': document.s3_bucket,
-                        's3_key': document.s3_key,
-                        's3_url': s3_url,  # URL pre-firmada para descargar
-                        'issue_date': str(document.issue_date) if document.issue_date else None,
-                        'expiration_date': str(document.expiration_date) if document.expiration_date else None,
-                        'callback_url': callback_url
-                    }
-
-                    n8n_service.trigger_workflow(doc_type.n8n_webhook_url, payload)
-                    n8n_triggered = True
-
-                    # Registrar envío a N8N
-                    DocumentValidationService.create_validation_log(
-                        document=document,
-                        action='n8n_sent',
-                        new_status='P',
-                        performed_by='system',
-                        reason='Documento enviado a N8N para validación',
-                        metadata={'webhook_url': doc_type.n8n_webhook_url}
-                    )
-
-                except Exception as e:
-                    # Log del error pero no fallar la carga
-                    DocumentValidationService.create_validation_log(
-                        document=document,
-                        action='n8n_sent',
-                        new_status='P',
-                        performed_by='system',
-                        reason=f'Error al enviar a N8N: {str(e)}',
-                        metadata={'error': str(e)}
-                    )
-
-            return Response({
-                'id': str(document.id),
-                'status': document.validation_status,
-                'message': 'Documento cargado exitosamente',
-                'n8n_triggered': n8n_triggered
-            }, status=status.HTTP_201_CREATED)
 
         except Exception as e:
+            # Clean up S3 file if it was uploaded but DB transaction failed
+            if 's3_metadata' in locals():
+                try:
+                    self.s3_service.delete_file(s3_metadata['s3_key'])
+                except Exception:
+                    pass  # Log this in production
+
             return Response({
                 'error': True,
                 'message': f'Error al cargar documento: {str(e)}'
@@ -240,8 +276,7 @@ class DocumentViewSet(viewsets.ModelViewSet):
         document = self.get_object()
 
         try:
-            s3_service = S3Service()
-            download_url = s3_service.generate_presigned_url(
+            download_url = self.s3_service.generate_presigned_url(
                 s3_key=document.s3_key,
                 expiration=300  # 5 minutos
             )
@@ -339,7 +374,7 @@ class DocumentViewSet(viewsets.ModelViewSet):
         document = self.get_object()
 
         # Validar que el documento esté en estado pendiente
-        if document.validation_status != 'P':
+        if document.validation_status != ValidationStatus.PENDING:
             return Response({
                 'error': True,
                 'message': f'El documento ya fue procesado. Estado actual: {document.get_validation_status_display()}'
