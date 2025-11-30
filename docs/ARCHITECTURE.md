@@ -1,317 +1,105 @@
-# Arquitectura del Sistema
+# Arquitectura
 
-Documento que explica las decisiones de diseño arquitectónico del Sistema de Gestión de Documentos Empresariales de FailFast.
+Decisiones de diseño del sistema.
 
-## Tabla de Contenidos
-
-- [Visión General](#visión-general)
-- [Arquitectura de Capas](#arquitectura-de-capas)
-- [Patrones de Diseño](#patrones-de-diseño)
-- [Decisiones Técnicas](#decisiones-técnicas)
-- [Escalabilidad](#escalabilidad)
-- [Seguridad](#seguridad)
-- [Optimizaciones](#optimizaciones)
-
-## Visión General
-
-El sistema está diseñado como una aplicación backend modular, escalable y mantenible que sigue los principios de:
-
-- **Separation of Concerns**: Separación clara entre capas
-- **DRY (Don't Repeat Yourself)**: Reutilización de código
-- **SOLID**: Principios de diseño orientado a objetos
-- **API-First**: Diseño centrado en la API REST
-
-### Stack Tecnológico
+## Stack
 
 ```
-Cliente --> Django REST Framework API --> Service Layer --> PostgreSQL y N8n 
+Cliente -> Django REST API -> Service Layer -> PostgreSQL / AWS S3 / N8N
 ```
 
-## Arquitectura de Capas
+## Capas
 
-### 1. Capa de Presentación (API Layer)
+### 1. API Layer (ViewSets + Serializers)
 
-**Responsabilidad**: Exponer endpoints REST y manejar requests/responses
+Endpoints REST junto a Orquestación básica.
 
-**Componentes**:
-- **ViewSets**: Lógica de endpoints
-- **Serializers**: Validación y transformación de datos
-- **URLs**: Ruteo de requests
+### 2. Service Layer
 
-### 2. Capa de Servicios (Service Layer)
+Lógica de negocio separada en servicios:
+- `S3Service` - Manejo de AWS S3
+- `N8NService` - Integración con N8N
+- `DocumentValidationService` - Validaciones
 
-**Responsabilidad**: Lógica de negocio y orquestación
-
-**Componentes**:
-- **S3Service**: Manejo de almacenamiento en AWS S3
-- **N8NService**: Integración con workflows de N8N
-- **DocumentValidationService**: Lógica de validación de documentos
-
-**Decisión**: Separar la lógica de negocio de los ViewSets permite:
-- Reutilización del código
-- Testing más fácil
-- Menor acoplamiento
-- Responsabilidad única
+Por qué: reutilización de código, testing más fácil, menor acoplamiento.
 
 ```python
-# Ejemplo de uso del Service Layer
 class DocumentViewSet(viewsets.ModelViewSet):
     def upload(self, request):
-        # ViewSet solo orquesta
+        # Solo orquesta, no implementa lógica
         s3_metadata = S3Service().upload_file(...)
         document = Document.objects.create(...)
-        DocumentValidationService.create_validation_log(...)
 ```
 
-### 3. Capa de Datos (Data Layer)
+### 3. Data Layer
 
-**Responsabilidad**: Persistencia y acceso a datos
+Modelos, managers, migraciones, funciones PL/pgSQL.
 
-**Componentes**:
-- **Models**: Definición de esquemas con validaciones personalizadas
-- **Managers**: Queries personalizados para operaciones complejas
-- **Migrations**: Control de versiones de BD
-- **PL/pgSQL Functions**: Validaciones masivas optimizadas en base de datos
+## Patrones usados
 
-## Patrones de Diseño
-
-### 1. Service Pattern
-
+**Service Pattern** - Encapsula la lógica de negocio:
 ```python
 class DocumentValidationService:
     @staticmethod
     def approve_document(document, reason, performed_by):
-        # Encapsula lógica de negocio compleja
         document.validation_status = 'A'
         document.save()
-        # Crear log de auditoría
-        DocumentValidationService.create_validation_log(...)
+        # log de auditoría...
 ```
 
-### 2. Factory Pattern (Testing)
+**Factory Pattern** - Testing con factory_boy
 
+**Strategy Pattern** - Diferentes validaciones según tipo:
 ```python
-# Uso de factory_boy para testing
-class DocumentFactory(DjangoModelFactory):
-    class Meta:
-        model = Document
-    # ...
-```
-
-### 3. Strategy Pattern (Validaciones)
-
-```python
-# Diferentes estrategias de validación según tipo de documento
 if doc_type.uses_n8n_workflow:
-    # Validación automática vía N8N
     N8NService().trigger_workflow(...)
 else:
-    # Validación manual
     DocumentValidationService.approve_document(...)
 ```
+
 ## Escalabilidad
 
-### Estrategias Implementadas
-
-#### 1. Índices de Base de Datos
-
-```python
-class Document(models.Model):
-    class Meta:
-        indexes = [
-            models.Index(fields=['company']),
-            models.Index(fields=['entity']),
-            models.Index(fields=['validation_status']),
-            models.Index(fields=['expiration_date']),
-        ]
-```
-
-#### 2. Select Related / Prefetch Related
-
-```python
-# Evita N+1 queries
-queryset = Document.objects.select_related(
-    'company', 'entity', 'document_type'
-).prefetch_related('validation_logs')
-```
-
-#### 3. Paginación
-
-```python
-# Configuración en settings.py
-REST_FRAMEWORK = {
-    'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
-    'PAGE_SIZE': 50,
-}
-```
-
-#### 4. Almacenamiento Distribuido (S3)
-
-- Archivos no están en el servidor de aplicación
-- Escalabilidad horizontal sin compartir disco
-- CDN-ready con CloudFront
-
-### Escalabilidad Futura
-
-**Horizontal Scaling**:
-```yaml
-# Docker Compose con múltiples workers
-services:
-  web:
-    deploy:
-      replicas: 3
-
-  nginx:
-    image: nginx
-    # Load balancer
-```
-
-**Caché**:
-```python
-# Redis para caché (futuro)
-from django.core.cache import cache
-
-@cache.memoize(timeout=300)
-def get_document_types(entity_type):
-    return DocumentType.objects.filter(entity_type=entity_type)
-```
-
-**Procesamiento Asíncrono**:
-```python
-# Celery para tareas pesadas (futuro)
-@celery.task
-def process_bulk_validation(company_id, entity_type):
-    # Validación masiva en background
-```
+**Implementado:**
+- Índices en BD (company, entity, validation_status, expiration_date)
+- select_related/prefetch_related para evitar N+1 queries
+- Paginación (50 items por página)
+- Archivos en S3 (no en servidor)
 
 ## Seguridad
 
-### Implementaciones Actuales
-
-#### 1. Pre-signed URLs
-
-```python
-# URLs temporales para descarga segura
-url = s3_service.generate_presigned_url(s3_key, expiration=300)
-# Expira en 5 minutos
-```
-
-#### 2. Validaciones de Entrada
-
-```python
-class DocumentUploadSerializer(serializers.Serializer):
-    def validate(self, data):
-        # Validar tamaño de archivo
-        validate_file_size(data['file'])
-        # Validar tipo de archivo
-        validate_file_type(data['file'])
-        # Validar permisos
-        if entity.company_id != data['company_id']:
-            raise ValidationError(...)
-```
-
-#### 3. SQL Injection Protection
-
-Django ORM protege automáticamente:
-```python
-# SEGURO - Usa prepared statements
-Document.objects.filter(id=user_input)
-
-# INSEGURO - No usar
-cursor.execute(f"SELECT * FROM documents WHERE id = {user_input}")
-```
-
-### Recomendaciones Futuras
-
-1. **Autenticación JWT**:
-```python
-REST_FRAMEWORK = {
-    'DEFAULT_AUTHENTICATION_CLASSES': [
-        'rest_framework_simplejwt.authentication.JWTAuthentication',
-    ],
-}
-```
-
-2. **Permisos Granulares**:
-```python
-class IsCompanyOwner(permissions.BasePermission):
-    def has_object_permission(self, request, view, obj):
-        return obj.company.id == request.user.company_id
-```
-
-3. **Rate Limiting**:
-```python
-from rest_framework.throttling import AnonRateThrottle
-
-class DocumentViewSet(viewsets.ModelViewSet):
-    throttle_classes = [AnonRateThrottle]
-```
+**Implementado:**
+- Pre-signed URLs para S3 (expiran en 5 min)
+- Validaciones de entrada en serializers
+- Django ORM protege contra SQL injection
 
 ## Optimizaciones
 
-### 1. Queries Optimizados
+### Queries eficientes
 
-**Problema**: N+1 queries
 ```python
-# MAL
-for document in documents:
-    print(document.company.name)  # Query por cada documento
-```
+# Mal - N+1 queries
+for doc in documents:
+    print(doc.company.name)
 
-**Solución**: select_related
-```python
-# BIEN
+# Bien - 1 query
 documents = Document.objects.select_related('company')
-for document in documents:
-    print(document.company.name)  # No extra queries
 ```
 
-### 2. Bulk Operations
+### Bulk operations
 
 ```python
-# Crear múltiples objetos eficientemente
 Document.objects.bulk_create([doc1, doc2, doc3])
-
-# Actualizar múltiples objetos
-Document.objects.filter(company=company).update(validation_status='A')
+Document.objects.filter(company=company).update(status='A')
 ```
 
-### 3. Database Functions
+### DB functions en vez de Python
 
 ```python
-# Usar funciones de BD en vez de Python
-from django.db.models import Count
-
 Entity.objects.annotate(
     document_count=Count('documents')
 ).filter(document_count__lt=5)
 ```
 
-### 4. Compression y Minificación
+## Logging
 
-```python
-# settings.py
-STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
-```
-
-## Monitoreo y Logging
-
-### Logging Configurado
-
-```python
-LOGGING = {
-    'version': 1,
-    'handlers': {
-        'file': {
-            'class': 'logging.FileHandler',
-            'filename': 'debug.log',
-        },
-    },
-    'loggers': {
-        'django': {
-            'handlers': ['file'],
-            'level': 'INFO',
-        },
-    },
-}
-```
+Configurado en `settings.py` para registrar en archivo `debug.log`. Nivel INFO para Django.
