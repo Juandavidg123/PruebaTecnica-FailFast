@@ -1,0 +1,177 @@
+{
+  "name": "FailFast Document Validation Workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "validate-document",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "a15e73c1-0221-45ae-bec3-f94c42a5515e",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        -128,
+        -80
+      ],
+      "webhookId": "validate-document"
+    },
+    {
+      "parameters": {
+        "bucketName": "={{ $json.body.s3_bucket }}",
+        "fileKey": "={{ $json.body.s3_key }}"
+      },
+      "id": "190cd8e9-eb26-4acb-a927-6ab5d4195823",
+      "name": "Download from S3",
+      "type": "n8n-nodes-base.awsS3",
+      "typeVersion": 1,
+      "position": [
+        80,
+        -80
+      ],
+      "credentials": {
+        "aws": {
+          "id": "fQyN9VsCQAIF91aj",
+          "name": "AWS (IAM) account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Obtener datos del Textract y del webhook\nconst textractData = $input.item.json;\nconst documentInfo = $('Webhook').item.json.body;\n\n// Extraer texto de los bloques de Textract\nlet extractedText = '';\nlet confidence = 0;\nlet blockCount = 0;\n\nif (textractData.Blocks) {\n  for (const block of textractData.Blocks) {\n    if (block.BlockType === 'LINE') {\n      extractedText += block.Text + '\\n';\n      confidence += block.Confidence || 0;\n      blockCount++;\n    }\n  }\n}\n\n// Calcular confianza promedio\nconst avgConfidence = blockCount > 0 ? confidence / blockCount : 0;\n\n// Intentar extraer fecha de vencimiento del texto\nconst expirationMatch = extractedText.match(/vencimiento:?\\s*(\\d{2}[-\\/]\\d{2}[-\\/]\\d{4})/i);\nconst extractedExpiration = expirationMatch ? expirationMatch[1] : null;\n\n// Validación\nlet isValid = true;\nlet reason = \"\";\n\n// Verificar confianza mínima\nif (avgConfidence < 80) {\n  isValid = false;\n  reason = `OCR confidence too low: ${avgConfidence.toFixed(2)}%`;\n}\n// Verificar fecha de vencimiento\nelse if (extractedExpiration && documentInfo.expiration_date) {\n  const extracted = extractedExpiration.replace(/\\//g, '-');\n  const provided = documentInfo.expiration_date;\n\n  if (extracted !== provided) {\n    isValid = false;\n    reason = `Expiration date mismatch. Extracted: ${extracted}, Provided: ${provided}`;\n  }\n\n  // Verificar si está vencido\n  const expirationDate = new Date(extracted);\n  const today = new Date();\n\n  if (expirationDate < today) {\n    isValid = false;\n    reason = `Document expired on ${extracted}`;\n  }\n} else {\n  reason = \"Document validated successfully via OCR\";\n}\n\n// Retornar resultado\nreturn {\n  json: {\n    document_id: documentInfo.document_id,\n    status: isValid ? \"approved\" : \"rejected\",\n    reason: reason,\n    metadata: {\n      ocr_confidence: avgConfidence,\n      extracted_expiration: extractedExpiration,\n      blocks_count: blockCount,\n      extracted_text_preview: extractedText.substring(0, 200)\n    }\n  }\n};"
+      },
+      "id": "f81bcd04-1a87-4588-a5ba-56ce29c87237",
+      "name": "Validate OCR Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        640,
+        -80
+      ],
+      "notes": "Validate extracted data against provided information"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Webhook').item.json.body.callback_url }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"status\": \"{{ $json.status }}\",\n  \"reason\": \"{{ $json.reason }}\",\n  \"metadata\": {{ JSON.stringify($json.metadata) }}\n}",
+        "options": {}
+      },
+      "id": "8b7101d5-02f9-4e6e-9504-beb58337a3f9",
+      "name": "Callback to Django",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [
+        880,
+        -80
+      ],
+      "notes": "Send validation result back to Django API"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: true, message: 'Document validation initiated' }) }}",
+        "options": {}
+      },
+      "id": "5a3af435-a35c-45ea-8fa7-ee804cf9e89c",
+      "name": "Webhook Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1088,
+        -80
+      ]
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.awsTextract",
+      "typeVersion": 1,
+      "position": [
+        384,
+        -80
+      ],
+      "id": "4cbb2f74-3712-4902-8c4c-7fb20b85c761",
+      "name": "AWS Textract",
+      "credentials": {
+        "aws": {
+          "id": "fQyN9VsCQAIF91aj",
+          "name": "AWS (IAM) account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Download from S3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download from S3": {
+      "main": [
+        [
+          {
+            "node": "AWS Textract",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate OCR Data": {
+      "main": [
+        [
+          {
+            "node": "Callback to Django",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Callback to Django": {
+      "main": [
+        [
+          {
+            "node": "Webhook Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AWS Textract": {
+      "main": [
+        [
+          {
+            "node": "Validate OCR Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "bfc56933-a1c2-4039-abcf-76c4d33c7f55",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "4ab7d83ed7ecb6cb72a6c2af0f4e90d09d5bbb8666055abe571f8a0db13ea18a"
+  },
+  "id": "VNkDnXtAxfWbiHBJ",
+  "tags": []
+}

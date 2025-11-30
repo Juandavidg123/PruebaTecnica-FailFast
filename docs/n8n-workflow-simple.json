@@ -1,0 +1,117 @@
+{
+  "name": "FailFast Document Validation Workflow (Simple)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "validate-document-simple",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "1d03411b-060f-4283-b9b2-b468b727815b",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        64,
+        432
+      ],
+      "webhookId": "validate-document-simple"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Obtener datos del webhook desde body\nconst documentInfo = $input.item.json.body;\n\n// Validación simple basada en fechas\nlet isValid = true;\nlet reason = \"\";\n\n// Verificar fecha de vencimiento\nif (documentInfo.expiration_date) {\n  const expirationDate = new Date(documentInfo.expiration_date);\n  const today = new Date();\n\n  if (expirationDate < today) {\n    isValid = false;\n    reason = `Document expired on ${documentInfo.expiration_date}`;\n  } else {\n    reason = \"Document validated successfully - expiration date is valid\";\n  }\n} else {\n  reason = \"Document validated successfully - no expiration date validation required\";\n}\n\n// Retornar resultado\nreturn {\n  json: {\n    document_id: documentInfo.document_id,\n    status: isValid ? \"approved\" : \"rejected\",\n    reason: reason,\n    metadata: {\n      validation_method: \"date_check\",\n      expiration_date: documentInfo.expiration_date,\n      issue_date: documentInfo.issue_date,\n      document_type: documentInfo.document_type\n    }\n  }\n};"
+      },
+      "id": "5faa6f6e-1a9c-4360-a8f2-bd2f6926e7dd",
+      "name": "Validate Document Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        272,
+        432
+      ],
+      "notes": "Simple validation based on metadata"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Webhook').item.json.body.callback_url }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"status\": \"{{ $json.status }}\",\n  \"reason\": \"{{ $json.reason }}\",\n  \"metadata\": {{ JSON.stringify($json.metadata) }}\n}",
+        "options": {}
+      },
+      "id": "d36d5eef-c9cc-4a5b-926a-d862f6f2e87a",
+      "name": "Callback to Django",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [
+        464,
+        432
+      ],
+      "notes": "Send validation result back to Django API"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: true, message: 'Document validation initiated' }) }}",
+        "options": {}
+      },
+      "id": "0d3d8d3e-2af4-4018-bde0-9d570695b2e3",
+      "name": "Webhook Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        672,
+        432
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Document Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Document Data": {
+      "main": [
+        [
+          {
+            "node": "Callback to Django",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Callback to Django": {
+      "main": [
+        [
+          {
+            "node": "Webhook Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "4c10ca94-9c50-453c-bd4a-af76b7de68db",
+  "meta": {
+    "instanceId": "4ab7d83ed7ecb6cb72a6c2af0f4e90d09d5bbb8666055abe571f8a0db13ea18a"
+  },
+  "id": "ettE6cj0veqAEOGq",
+  "tags": []
+}
