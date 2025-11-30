@@ -1,0 +1,510 @@
+{
+  "info": {
+    "name": "FailFast Document Management API",
+    "description": "Colección completa de endpoints para el Sistema de Gestión de Documentos Empresariales",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:8000/api",
+      "type": "string"
+    },
+    {
+      "key": "company_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "entity_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "document_type_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "document_id",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "1. Companies",
+      "item": [
+        {
+          "name": "List Companies",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/companies/",
+              "host": ["{{base_url}}"],
+              "path": ["companies", ""]
+            }
+          }
+        },
+        {
+          "name": "Create Company",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    var jsonData = pm.response.json();",
+                  "    pm.collectionVariables.set('company_id', jsonData.id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"FailFast Colombia SAS\",\n  \"tax_id\": \"900123456-7\",\n  \"is_active\": true\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/companies/",
+              "host": ["{{base_url}}"],
+              "path": ["companies", ""]
+            }
+          }
+        },
+        {
+          "name": "Get Company",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/companies/{{company_id}}/",
+              "host": ["{{base_url}}"],
+              "path": ["companies", "{{company_id}}", ""]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. Entities",
+      "item": [
+        {
+          "name": "List Entities",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/entities/",
+              "host": ["{{base_url}}"],
+              "path": ["entities", ""]
+            }
+          }
+        },
+        {
+          "name": "Create Vehicle Entity",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    var jsonData = pm.response.json();",
+                  "    pm.collectionVariables.set('entity_id', jsonData.id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"company\": \"{{company_id}}\",\n  \"entity_type\": \"vehicle\",\n  \"entity_code\": \"ABC123\",\n  \"entity_name\": \"Vehículo ABC123 - Toyota Hilux\",\n  \"metadata\": {\n    \"brand\": \"Toyota\",\n    \"model\": \"Hilux\",\n    \"year\": 2023,\n    \"color\": \"Blanco\"\n  },\n  \"is_active\": true\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/entities/",
+              "host": ["{{base_url}}"],
+              "path": ["entities", ""]
+            }
+          }
+        },
+        {
+          "name": "Create Employee Entity",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"company\": \"{{company_id}}\",\n  \"entity_type\": \"employee\",\n  \"entity_code\": \"1234567890\",\n  \"entity_name\": \"Juan Pérez\",\n  \"metadata\": {\n    \"position\": \"Conductor\",\n    \"department\": \"Logística\",\n    \"hire_date\": \"2023-01-15\"\n  },\n  \"is_active\": true\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/entities/",
+              "host": ["{{base_url}}"],
+              "path": ["entities", ""]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. Document Types",
+      "item": [
+        {
+          "name": "List Document Types",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/document-types/",
+              "host": ["{{base_url}}"],
+              "path": ["document-types", ""]
+            }
+          }
+        },
+        {
+          "name": "Create SOAT Document Type",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    var jsonData = pm.response.json();",
+                  "    pm.collectionVariables.set('document_type_id', jsonData.id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code\": \"SOAT\",\n  \"name\": \"Seguro Obligatorio de Accidentes de Tránsito\",\n  \"is_mandatory\": true,\n  \"requires_issue_date\": true,\n  \"requires_expiration_date\": true,\n  \"uses_n8n_workflow\": false,\n  \"n8n_webhook_url\": null,\n  \"entity_type\": \"vehicle\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/document-types/",
+              "host": ["{{base_url}}"],
+              "path": ["document-types", ""]
+            }
+          }
+        },
+        {
+          "name": "Create License with N8N",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code\": \"LICENCIA_CONDUCIR\",\n  \"name\": \"Licencia de Conducción\",\n  \"is_mandatory\": true,\n  \"requires_issue_date\": true,\n  \"requires_expiration_date\": true,\n  \"uses_n8n_workflow\": true,\n  \"n8n_webhook_url\": \"http://localhost:5678/webhook/validate-document\",\n  \"entity_type\": \"employee\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/document-types/",
+              "host": ["{{base_url}}"],
+              "path": ["document-types", ""]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "4. Documents",
+      "item": [
+        {
+          "name": "List Documents",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/documents/",
+              "host": ["{{base_url}}"],
+              "path": ["documents", ""]
+            }
+          }
+        },
+        {
+          "name": "Upload Document",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    var jsonData = pm.response.json();",
+                  "    pm.collectionVariables.set('document_id', jsonData.id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "company_id",
+                  "value": "{{company_id}}",
+                  "type": "text"
+                },
+                {
+                  "key": "entity_id",
+                  "value": "{{entity_id}}",
+                  "type": "text"
+                },
+                {
+                  "key": "document_type_id",
+                  "value": "{{document_type_id}}",
+                  "type": "text"
+                },
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": "/path/to/your/document.pdf"
+                },
+                {
+                  "key": "issue_date",
+                  "value": "2024-01-15",
+                  "type": "text"
+                },
+                {
+                  "key": "expiration_date",
+                  "value": "2025-01-15",
+                  "type": "text"
+                },
+                {
+                  "key": "uploaded_by",
+                  "value": "test@failfast.com",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/documents/upload/",
+              "host": ["{{base_url}}"],
+              "path": ["documents", "upload", ""]
+            }
+          }
+        },
+        {
+          "name": "Get Document",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/documents/{{document_id}}/",
+              "host": ["{{base_url}}"],
+              "path": ["documents", "{{document_id}}", ""]
+            }
+          }
+        },
+        {
+          "name": "Download Document",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/documents/{{document_id}}/download/",
+              "host": ["{{base_url}}"],
+              "path": ["documents", "{{document_id}}", "download", ""]
+            }
+          }
+        },
+        {
+          "name": "Approve Document",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"Documento verificado manualmente y validado\",\n  \"performed_by\": \"admin@failfast.com\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/documents/{{document_id}}/approve/",
+              "host": ["{{base_url}}"],
+              "path": ["documents", "{{document_id}}", "approve", ""]
+            }
+          }
+        },
+        {
+          "name": "Reject Document",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"Fecha de vencimiento incorrecta o documento ilegible\",\n  \"performed_by\": \"admin@failfast.com\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/documents/{{document_id}}/reject/",
+              "host": ["{{base_url}}"],
+              "path": ["documents", "{{document_id}}", "reject", ""]
+            }
+          }
+        },
+        {
+          "name": "N8N Callback - Approved",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"approved\",\n  \"reason\": \"OCR validado exitosamente con confianza del 98%\",\n  \"metadata\": {\n    \"ocr_confidence\": 0.98,\n    \"extracted_expiration\": \"2025-01-15\",\n    \"processing_time_ms\": 1234\n  }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/documents/{{document_id}}/n8n-callback/",
+              "host": ["{{base_url}}"],
+              "path": ["documents", "{{document_id}}", "n8n-callback", ""]
+            }
+          }
+        },
+        {
+          "name": "N8N Callback - Rejected",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"rejected\",\n  \"reason\": \"OCR no pudo leer el documento con suficiente confianza\",\n  \"metadata\": {\n    \"ocr_confidence\": 0.45,\n    \"error\": \"low_confidence\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/documents/{{document_id}}/n8n-callback/",
+              "host": ["{{base_url}}"],
+              "path": ["documents", "{{document_id}}", "n8n-callback", ""]
+            }
+          }
+        },
+        {
+          "name": "Bulk Validation - All Entities",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"company_id\": \"{{company_id}}\",\n  \"entity_type\": \"vehicle\",\n  \"entity_ids\": null\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/documents/validate/",
+              "host": ["{{base_url}}"],
+              "path": ["documents", "validate", ""]
+            }
+          }
+        },
+        {
+          "name": "Bulk Validation - Specific Entities",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"company_id\": \"{{company_id}}\",\n  \"entity_type\": \"vehicle\",\n  \"entity_ids\": [\"{{entity_id}}\"]\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/documents/validate/",
+              "host": ["{{base_url}}"],
+              "path": ["documents", "validate", ""]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "5. Validation Logs",
+      "item": [
+        {
+          "name": "List Validation Logs",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/validation-logs/",
+              "host": ["{{base_url}}"],
+              "path": ["validation-logs", ""]
+            }
+          }
+        },
+        {
+          "name": "Filter Logs by Document",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/validation-logs/?document={{document_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["validation-logs", ""],
+              "query": [
+                {
+                  "key": "document",
+                  "value": "{{document_id}}"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
